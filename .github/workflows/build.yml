@@ -1,0 +1,28 @@
+name: build-ipa
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build unsigned IPA
+        run: |
+          xcodebuild -project Test.xcodeproj -scheme Test -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tail -20
+          APP=$(find ~/Library/Developer/Xcode/DerivedData -name "Test.app" -path "*/Release-iphoneos/*" | head -1)
+          echo "APP=$APP"
+          if [ -z "$APP" ]; then
+            echo "no .app found"; exit 1
+          fi
+          mkdir -p Payload
+          cp -r "$APP" Payload/
+          rm -rf Payload/Test.app/_CodeSignature 2>/dev/null || true
+          zip -r test-unsigned.ipa Payload
+          ls -la test-unsigned.ipa
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-unsigned-ipa
+          path: test-unsigned.ipa

@@ -1,28 +1,45 @@
-name: build-ipa
+name: build-ipa-65343
 on: [push, workflow_dispatch]
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build unsigned IPA
+      - name: Compile PoC with real clang (arm64 iOS)
         run: |
-          xcodebuild -project Test.xcodeproj -scheme Test -configuration Release \
-            -sdk iphoneos -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO \
-            build 2>&1 | tail -20
-          APP=$(find ~/Library/Developer/Xcode/DerivedData -name "Test.app" -path "*/Release-iphoneos/*" | head -1)
-          echo "APP=$APP"
-          if [ -z "$APP" ]; then
-            echo "no .app found"; exit 1
-          fi
-          mkdir -p Payload
-          cp -r "$APP" Payload/
-          rm -rf Payload/Test.app/_CodeSignature 2>/dev/null || true
-          zip -r test-unsigned.ipa Payload
-          ls -la test-unsigned.ipa
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "SDK=$SDK"
+          mkdir -p Payload/Test.app
+          clang -arch arm64 -isysroot "$SDK" -fobjc-arc \
+            -framework Security -framework Foundation -framework CoreFoundation \
+            -framework IOKit \
+            -o Payload/Test.app/Test poc/poc_aks_oob.m 2>&1 | tail -20
+          ls -la Payload/Test.app/Test || exit 1
+      - name: Create Info.plist and sign ad-hoc
+        run: |
+          cat > Payload/Test.app/Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>Test</string>
+            <key>CFBundleIdentifier</key><string>com.research.poc65343</string>
+            <key>CFBundleName</key><string>Test</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>1.0</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>LSRequiresIPhoneOS</key><true/>
+            <key>UIDeviceFamily</key><array><integer>1</integer></array>
+            <key>UILaunchStoryboardName</key><string></string>
+            <key>MinimumOSVersion</key><string>15.0</string>
+          </dict>
+          </plist>
+          EOF
+          ldid -S Payload/Test.app/Test 2>/dev/null || codesign --force --sign - Payload/Test.app/Test 2>&1 | tail -3 || true
+          cd Payload && zip -r ../test-65343.ipa Test.app
+          ls -la ../test-65343.ipa
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: test-unsigned-ipa
-          path: test-unsigned.ipa
+          name: test-65343-ipa
+          path: test-65343.ipa
